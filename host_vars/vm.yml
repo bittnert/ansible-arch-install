@@ -1,4 +1,23 @@
 ---
-ansible_host: 192.168.1.210
+ansible_host: 192.168.1.214
+install_drive: /dev/nvme0n1
+boot_partition_suffix: 'p1'
+root_partition_suffix: 'p2'
+home_drive: /dev/sda
+home_partition_suffix: '1'
+home_fs_type: 'ext4'
+mount_points:
+  root:
+    device: '/dev/nvme0n1p2'
+    path: '/mnt'
+    fstype: 'ext4'
+  boot:
+    device: '/dev/nvme0n1p1'
+    path: '/mnt/boot'
+    fstype: 'vfat'
+  home:
+    device: '/dev/sda1'
+    path: '/mnt/home'
+    fstype: 'ext4'
 network:
   - enp0s3

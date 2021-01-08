@@ -58,26 +58,19 @@
           command: blkid -s UUID -o value '{{ install_drive }}{{ root_partition_suffix }}'
           register: root_uuid
           changed_when: false
+        - name: Get UUID for home filesystem
+          command: blkid -s UUID -o value '{{ home_drive }}{{ home_partition_suffix }}'
+          register: home_uuid
+          when: home_drive is defined
       tags:
         - create_filesystems
     - name: Mount filesystems
-      block:
-        - name: Mount root filesystem
-          mount:
-            path: /mnt
-            src: UUID={{ root_uuid.stdout }}
-            fstype: ext4
-            state: mounted
-        - name: Create mountpoint for boot volume
-          file:
-            path: /mnt/boot
-            state: directory
-        - name: Mount boot filesystem
-          mount:
-            path: /mnt/boot
-            src: UUID={{ boot_uuid.stdout }}
-            fstype: vfat
-            state: mounted
+      mount:
+        src: "{{ item.value.device }}"
+        fstype: "{{ item.value.fstype }}"
+        path: "{{ item.value.path }}"
+        state: "mounted"
+      with_dict: "{{ mount_points }}"
       tags:
         - mount_filesystems
     - name: Rank Arch mirrors
@@ -96,27 +89,29 @@
       tags:
         - pacstrap
     - name: Generate fstab
-      block:
-        - name: Generate blank fstab
-          command: genfstab -U /mnt >> /mnt/etc/fstab
-        - name: Add root volume to fstab
-          mount:
-            fstab: /mnt/etc/fstab
-            path: /
-            src: UUID={{ root_uuid.stdout }}
-            fstype: ext4
-            opts: defaults
-            passno: '1'
-            state: present
-        - name: Add boot volume to fstab
-          mount:
-            fstab: /mnt/etc/fstab
-            path: /boot
-            src: UUID={{ boot_uuid.stdout }}
-            fstype: vfat
-            opts: defaults
-            passno: '2'
-            state: present
+      shell:
+        cmd: genfstab -U /mnt >> /mnt/etc/fstab
+#      block:
+#        - name: Generate blank fstab
+#          command: genfstab -U /mnt >> /mnt/etc/fstab
+#        - name: Add root volume to fstab
+#          mount:
+#            fstab: /mnt/etc/fstab
+#            path: /
+#            src: UUID={{ root_uuid.stdout }}
+#            fstype: ext4
+#            opts: defaults
+#            passno: '1'
+#            state: present
+#        - name: Add boot volume to fstab
+#          mount:
+#            fstab: /mnt/etc/fstab
+#            path: /boot
+#            src: UUID={{ boot_uuid.stdout }}
+#            fstype: vfat
+#            opts: defaults
+#            passno: '2'
+#            state: present
     - name: Set local timezone
       command: arch-chroot /mnt ln -sf /usr/share/zoneinfo/America/New_York /etc/localtime
       tags:
