@@ -37,50 +37,6 @@
             state: present
       tags:
         - repartition
-    - name: Setup LVM root and tmp volumes
-      block:
-        - name: Remove existing volume group
-          lvg:
-            vg: VolumeGroup00
-            force: yes
-            state: absent
-        - name: Configure volume group
-          lvg:
-            vg: VolumeGroup00
-            pvs:
-              - '{{ install_drive }}{{ root_partition_suffix }}'
-        - name: Configure logical volumes
-          lvol:
-            vg: VolumeGroup00
-            lv: '{{ item.lv }}'
-            size: '{{ item.size }}'
-          loop:
-            - {lv: tmp, size: 512m}
-            - {lv: root, size: "100%FREE"}
-      tags:
-        - lvm
-    - name: Setup LUKS encryption for root filesystem
-      block:
-        - name: Copy keyfile
-          copy:
-            src: '{{ luks_keyfile }}'
-            dest: /root/keyfile
-        - name: Destroy existing LUKS volume
-          luks_device:
-            device: /dev/VolumeGroup00/root
-            state: absent
-        - name: Create and open LUKS volume
-          luks_device:
-            device: /dev/VolumeGroup00/root
-            keyfile: /root/keyfile
-            name: root
-            state: opened
-        - name: Get UUID for root LUKS volume
-          command: blkid -s UUID -o value /dev/VolumeGroup00/root
-          register: root_luks_uuid
-          changed_when: false
-      tags:
-        - luks
     - name: Create filesystems
       block:
         - name: Create FAT32 filesystem in boot partition
@@ -91,7 +47,7 @@
             force: yes
         - name: Create ext4 filesystem in root volume
           filesystem:
-            dev: /dev/mapper/root
+            dev: '{{ install_drive }}{{ root_partition_suffix }}'
             fstype: ext4
             force: yes
         - name: Get UUID for boot filesystem
@@ -99,7 +55,7 @@
           register: boot_uuid
           changed_when: false
         - name: Get UUID for root filesystem
-          command: blkid -s UUID -o value /dev/mapper/root
+          command: blkid -s UUID -o value '{{ install_drive }}{{ root_partition_suffix }}'
           register: root_uuid
           changed_when: false
       tags:
@@ -132,7 +88,7 @@
               - pacman-contrib
             update_cache: yes
         - name: Use rankmirrors to filter the fastest mirrors that support HTTPS
-          shell: curl -s "https://www.archlinux.org/mirrorlist/?country=US&protocol=https&use_mirror_status=on" | sed -e 's/^#Server/Server/' -e '/^#/d' | rankmirrors -n 5 - > /etc/pacman.d/mirrorlist
+          shell: curl -s "https://archlinux.org/mirrorlist/all/https/" | sed -e 's/^#Server/Server/' -e '/^#/d' | rankmirrors -n 5 - > /etc/pacman.d/mirrorlist
       tags:
         - mirrors
     - name: Run pacstrap
@@ -161,26 +117,6 @@
             opts: defaults
             passno: '2'
             state: present
-        - name: Add tmp volume to fstab
-          mount:
-            fstab: /mnt/etc/fstab
-            path: /tmp
-            src: /dev/mapper/tmp
-            fstype: tmpfs
-            opts: defaults
-            state: present
-      tags:
-        - fstab
-    - name: Add tmp volume to crypttab
-      crypttab:
-        path: /mnt/etc/crypttab
-        backing_device: /dev/VolumeGroup00/tmp
-        name: tmp
-        password: /dev/urandom
-        opts: tmp,cipher=aes-xts-plain64,size=512
-        state: present
-      tags:
-        - crypttab
     - name: Set local timezone
       command: arch-chroot /mnt ln -sf /usr/share/zoneinfo/America/New_York /etc/localtime
       tags:
@@ -219,15 +155,17 @@
           copy:
             content: |
               Description='Wired with DHCP'
-              Interface={{ wired_interface }}
+              Interface="{{ item }}"
               Connection=ethernet
               IP=dhcp
               IP6=dhcp-noaddr
               # IPv6 traffic is tunneled over IPv4, which eats 20 bytes of the MTU.
-              ExecUpPost='/usr/bin/ip link set {{ wired_interface }} mtu 1480'
-            dest: /mnt/etc/netctl/wired
+              ExecUpPost='/usr/bin/ip link set {{ item }} mtu 1480'
+            dest: /mnt/etc/netctl/{{ item }}
+          loop: "{{ network }}"
         - name: Enable wired netctl profile
-          command: arch-chroot /mnt netctl enable wired
+          command: arch-chroot /mnt netctl enable "{{ item}}"
+          loop: "{{ network }}"
       tags:
         - netctl
     - name: Enable sshd
@@ -240,7 +178,7 @@
           lineinfile:
             dest: /mnt/etc/mkinitcpio.conf
             regexp: ^HOOKS=
-            line: HOOKS=(base udev autodetect keyboard keymap modconf block encrypt lvm2 filesystems fsck)
+            line: HOOKS=(base udev autodetect keyboard keymap modconf block filesystems fsck)
         - name: Create new initramfs
           command: arch-chroot /mnt mkinitcpio -p linux
       tags:
@@ -248,11 +186,6 @@
         - mkinitcpio
     - name: Set up grub
       block:
-        - name: Add commandline information to grub config
-          lineinfile:
-            dest: /mnt/etc/default/grub
-            regexp: ^GRUB_CMDLINE_LINUX=
-            line: GRUB_CMDLINE_LINUX="cryptdevice=UUID={{ root_luks_uuid.stdout }}:root root=/dev/mapper/root"
         - name: Install grub
           command: arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=GRUB
         - name: Create grub config
