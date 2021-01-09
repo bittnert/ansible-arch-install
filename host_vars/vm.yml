@@ -1,23 +1,47 @@
 ---
 ansible_host: 192.168.1.214
-install_drive: /dev/nvme0n1
-boot_partition_suffix: 'p1'
-root_partition_suffix: 'p2'
-home_drive: /dev/sda
-home_partition_suffix: '1'
-home_fs_type: 'ext4'
+root_device: '/dev/nvme0n1'
+install_drive: '/dev/nvme0n1'
+partition_table:
+  - device: "/dev/nvme0n1"
+    settings:
+      - number: 1
+        part_end: 512MB
+        name: boot
+        flags: [boot, esp]
+      - number: 2
+        part_start: 512MB
+        name: root
+        flags: [lvm]
+#  boot:
+#    device: '{{ root_device }}'
+#    number: 1
+#    part_start: "0%"
+#    part_end: 512MB
+#    name: boot
+#    flags: [boot, esp]
+#  root:
+#    device: '{{ root_device }}'
+#    number: 2
+#    part_start: 512MB
+#    part_end: "100%"
+#    name: root
+#    flags: [lvm]
 mount_points:
   root:
     device: '/dev/nvme0n1p2'
     path: '/mnt'
     fstype: 'ext4'
+    format: "yes"
   boot:
     device: '/dev/nvme0n1p1'
     path: '/mnt/boot'
     fstype: 'vfat'
+    format: "yes"
   home:
     device: '/dev/sda1'
     path: '/mnt/home'
     fstype: 'ext4'
+    format: "no"
 network:
   - enp0s3

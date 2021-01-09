@@ -1,4 +1,3 @@
----
 - hosts: all
   tasks:
     - name: Abort if the host is not booted from the Arch install media
@@ -11,59 +10,29 @@
       command: timedatectl set-ntp true
       tags:
         - sync_clock
+    - name: wipe drives
+      command: find /dev -wholename "/dev/{{ item.device }}*" -exec wipefs --force --all {} \; 
+      loop: '{{ partition_table }}'
     - name: Repartition install drive
-      block:
-        - name: Wipe install drive and all its partitions
-          command: find /dev -wholename "{{ install_drive }}*" -exec wipefs --force --all {} \;
-          tags:
-            - wipefs
-        - name: Create boot partition
-          parted:
-            device: '{{ install_drive }}'
-            label: gpt
-            number: 1
-            part_end: 512MB
-            name: boot
-            flags: [boot, esp]
-            state: present
-        - name: Create root partition
-          parted:
-            device: '{{ install_drive }}'
-            label: gpt
-            number: 2
-            part_start: 512MB
-            name: root
-            flags: [lvm]
-            state: present
-      tags:
-        - repartition
+      parted:
+        device: "{{ item.0.device }}"
+        label: gpt
+        number: "{{ item.1.number }}"
+        part_start: "{{ item.1.part_start | default('0%') }}"
+        part_end: "{{ item.1.part_end | default('100%') }}"
+        name: "{{ item.1.name }}"
+        flags: "{{ item.1.flags }}"
+        state: present 
+      with_subelements:
+        - "{{ partition_table }}"
+        - settings
     - name: Create filesystems
-      block:
-        - name: Create FAT32 filesystem in boot partition
-          filesystem:
-            dev: '{{ install_drive }}{{ boot_partition_suffix }}'
-            fstype: vfat
-            opts: -F32
-            force: yes
-        - name: Create ext4 filesystem in root volume
-          filesystem:
-            dev: '{{ install_drive }}{{ root_partition_suffix }}'
-            fstype: ext4
-            force: yes
-        - name: Get UUID for boot filesystem
-          command: blkid -s UUID -o value '{{ install_drive }}{{ boot_partition_suffix }}'
-          register: boot_uuid
-          changed_when: false
-        - name: Get UUID for root filesystem
-          command: blkid -s UUID -o value '{{ install_drive }}{{ root_partition_suffix }}'
-          register: root_uuid
-          changed_when: false
-        - name: Get UUID for home filesystem
-          command: blkid -s UUID -o value '{{ home_drive }}{{ home_partition_suffix }}'
-          register: home_uuid
-          when: home_drive is defined
-      tags:
-        - create_filesystems
+      filesystem:
+        dev: "{{ item.value.device }}"
+        fstype: "{{ item.value.fstype }}"
+        force: yes
+      with_dict: "{{ mount_points }}"
+      when: item.value.format == "yes"
     - name: Mount filesystems
       mount:
         src: "{{ item.value.device }}"
@@ -82,6 +51,7 @@
             update_cache: yes
         - name: Use rankmirrors to filter the fastest mirrors that support HTTPS
           shell: curl -s "https://archlinux.org/mirrorlist/all/https/" | sed -e 's/^#Server/Server/' -e '/^#/d' | rankmirrors -n 5 - > /etc/pacman.d/mirrorlist
+            warn=false
       tags:
         - mirrors
     - name: Run pacstrap
@@ -91,27 +61,6 @@
     - name: Generate fstab
       shell:
         cmd: genfstab -U /mnt >> /mnt/etc/fstab
-#      block:
-#        - name: Generate blank fstab
-#          command: genfstab -U /mnt >> /mnt/etc/fstab
-#        - name: Add root volume to fstab
-#          mount:
-#            fstab: /mnt/etc/fstab
-#            path: /
-#            src: UUID={{ root_uuid.stdout }}
-#            fstype: ext4
-#            opts: defaults
-#            passno: '1'
-#            state: present
-#        - name: Add boot volume to fstab
-#          mount:
-#            fstab: /mnt/etc/fstab
-#            path: /boot
-#            src: UUID={{ boot_uuid.stdout }}
-#            fstype: vfat
-#            opts: defaults
-#            passno: '2'
-#            state: present
     - name: Set local timezone
       command: arch-chroot /mnt ln -sf /usr/share/zoneinfo/America/New_York /etc/localtime
       tags:
@@ -150,7 +99,7 @@
           copy:
             content: |
               Description='Wired with DHCP'
-              Interface="{{ item }}"
+              Interface={{ item }}
               Connection=ethernet
               IP=dhcp
               IP6=dhcp-noaddr
@@ -159,7 +108,7 @@
             dest: /mnt/etc/netctl/{{ item }}
           loop: "{{ network }}"
         - name: Enable wired netctl profile
-          command: arch-chroot /mnt netctl enable "{{ item}}"
+          command: arch-chroot /mnt netctl enable "{{ item }}"
           loop: "{{ network }}"
       tags:
         - netctl
